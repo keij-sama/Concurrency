@@ -3,8 +3,8 @@ package compute
 import (
 	"fmt"
 
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/compute/parser"
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/storage"
+	"github.com/keij-sama/Concurrency/database/internal/database/compute/parser"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage"
 	"go.uber.org/zap"
 )
 

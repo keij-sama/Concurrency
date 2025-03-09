@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/compute"
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/compute/parser"
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/storage"
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/storage/engine"
+	"github.com/keij-sama/Concurrency/database/internal/database/compute"
+	"github.com/keij-sama/Concurrency/database/internal/database/compute/parser"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/engine"
 )
 
 func main() {

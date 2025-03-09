@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"github.com/keij-sama/CourseConcurrency/database/internal/database/storage/engine"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/engine"
 	"go.uber.org/zap"
 )
 

@@ -1,4 +1,4 @@
-module github.com/keij-sama/CourseConcurrency
+module github.com/keij-sama/Concurrency
 
 go 1.22.2
 
