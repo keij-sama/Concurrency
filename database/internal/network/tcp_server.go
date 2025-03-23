@@ -51,7 +51,7 @@ func WithBufferSize(size int) TCPServerOption {
 
 // создает новый TCP сервер
 func NewTCPServer(address string, logger *zap.Logger, options ...TCPServerOption) (*TCPServer, error) {
-	if logger != nil {
+	if logger == nil {
 		return nil, errors.New("logger is invalid")
 	}
 
