@@ -21,9 +21,11 @@ type SimpleCompute struct {
 }
 
 // Новый обработчик запросов
-func NewCompute(p parser.Parser, s storage.Storage) Compute {
-	// Простой логгер
-	logger, _ := zap.NewDevelopment()
+func NewCompute(p parser.Parser, s storage.Storage, logger *zap.Logger) Compute {
+	// Если логгер не передан, создаем дефолтный
+	if logger == nil {
+		logger, _ = zap.NewDevelopment()
+	}
 
 	return &SimpleCompute{
 		parser:  p,
@@ -73,6 +75,6 @@ func (c *SimpleCompute) Process(input string) (string, error) {
 		return "OK", nil
 
 	default:
-		return "", fmt.Errorf("неизвестная команда: %s", cmd.Type)
+		return "", fmt.Errorf("unknown command: %s", cmd.Type)
 	}
 }

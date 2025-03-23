@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/keij-sama/Concurrency/database/internal/database/compute"
 	"github.com/keij-sama/Concurrency/database/internal/database/compute/parser"
 	"github.com/keij-sama/Concurrency/database/internal/database/storage"
@@ -13,11 +15,15 @@ import (
 )
 
 func main() {
+	// Создаем логгер
+	logger, _ := zap.NewDevelopment()
+	defer logger.Sync()
+
 	// Инициализация компонентов
 	parser := parser.NewParser()
 	engine := engine.NewInMemoryEngine()
-	storage := storage.NewStorage(engine)
-	compute := compute.NewCompute(parser, storage)
+	storage := storage.NewStorage(engine, logger)
+	compute := compute.NewCompute(parser, storage, logger)
 
 	fmt.Println("In-memory Key-Value Database")
 	fmt.Println("Available commands: SET, GET, DEL")

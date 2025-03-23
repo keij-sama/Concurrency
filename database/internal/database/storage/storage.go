@@ -19,9 +19,12 @@ type SimpleStorage struct {
 }
 
 // Новое хранилище
-func NewStorage(eng engine.Engine) Storage {
-	// Простой логгер
-	logger, _ := zap.NewDevelopment()
+func NewStorage(eng engine.Engine, logger *zap.Logger) Storage {
+
+	// Если логгер не передан, создаем дефолтный
+	if logger == nil {
+		logger, _ = zap.NewDevelopment()
+	}
 
 	return &SimpleStorage{
 		engine: eng,
