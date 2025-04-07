@@ -2,30 +2,56 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
 
-	"go.uber.org/zap"
-
+	"github.com/keij-sama/Concurrency/database/internal/config"
 	"github.com/keij-sama/Concurrency/database/internal/database/compute"
 	"github.com/keij-sama/Concurrency/database/internal/database/compute/parser"
 	"github.com/keij-sama/Concurrency/database/internal/database/storage"
 	"github.com/keij-sama/Concurrency/database/internal/database/storage/engine"
+	"github.com/keij-sama/Concurrency/pkg/logger"
 )
 
 func main() {
+	// Парсим флаги командной строки
+	configPath := flag.String("config", "config.yaml", "Path to config file")
+	flag.Parse()
+
+	// Загружаем конфигурацию
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Printf("Warning: Could not load config file: %v. Using default configuration.\n", err)
+	}
+
 	// Создаем логгер
-	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	customLogger := logger.NewLogger()
 
 	// Инициализация компонентов
 	parser := parser.NewParser()
 	engine := engine.NewInMemoryEngine()
-	storage := storage.NewStorage(engine, logger)
-	compute := compute.NewCompute(parser, storage, logger)
+
+	// Получаем конфигурацию WAL
+	walConfig := cfg.GetWALConfig()
+
+	// Инициализируем хранилище с WAL, если он включен
+	storage, err := storage.NewStorage(engine, customLogger, walConfig)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to initialize storage: %v\n", err)
+		os.Exit(1)
+	}
+	defer storage.Close()
+
+	compute := compute.NewCompute(parser, storage, customLogger)
 
 	fmt.Println("In-memory Key-Value Database")
+	if walConfig != nil && walConfig.Enabled {
+		fmt.Println("WAL is enabled - data will persist after restart")
+	} else {
+		fmt.Println("WAL is disabled - data will be lost after restart")
+	}
 	fmt.Println("Available commands: SET, GET, DEL")
 	fmt.Println("To exit, type exit or quit")
 	fmt.Println()

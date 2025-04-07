@@ -1,3 +1,4 @@
+// cmd/server/main.go
 package main
 
 import (
@@ -29,26 +30,31 @@ func main() {
 		fmt.Printf("Warning: Could not load config file: %v. Using default configuration.\n", err)
 	}
 
-	// Создаем логгер для zap
-	var zapLogger *zap.Logger
-
+	// Создаем логгер
+	zapLogger, _ := zap.NewProduction()
 	if cfg.Logging.Level == "debug" {
 		zapLogger, _ = zap.NewDevelopment()
-	} else {
-		zapConfig := zap.NewProductionConfig()
-		if cfg.Logging.Output != "stdout" && cfg.Logging.Output != "" {
-			zapConfig.OutputPaths = []string{cfg.Logging.Output}
-		}
-		zapLogger, _ = zapConfig.Build()
-	}
-
-	if zapLogger == nil {
-		zapLogger, _ = zap.NewProduction()
 	}
 	defer zapLogger.Sync()
 
-	// Создаем наш логгер на основе zap
-	customLogger := logger.NewLoggerWithZap{zapLogger}
+	customLogger := logger.NewLoggerWithZap(zapLogger)
+
+	// Инициализируем компоненты базы данных
+	parser := parser.NewParser()
+	eng := engine.NewInMemoryEngine()
+
+	// Получаем конфигурацию WAL
+	walConfig := cfg.GetWALConfig()
+
+	// Инициализируем хранилище с WAL
+	storage, err := storage.NewStorage(eng, customLogger, walConfig)
+	if err != nil {
+		zapLogger.Fatal("Failed to initialize storage", zap.Error(err))
+	}
+	defer storage.Close()
+
+	// Инициализируем обработчик запросов
+	compute := compute.NewCompute(parser, storage, customLogger)
 
 	// Создаем TCP-сервер
 	var bufferSize int
@@ -70,12 +76,6 @@ func main() {
 	if err != nil {
 		zapLogger.Fatal("Failed to create server", zap.Error(err))
 	}
-
-	// Инициализируем компоненты базы данных
-	parser := parser.NewParser()
-	eng := engine.NewInMemoryEngine()
-	storage := storage.NewStorage(eng, customLogger)
-	compute := compute.NewCompute(parser, storage, customLogger)
 
 	// Создаем контекст с отменой
 	ctx, cancel := context.WithCancel(context.Background())

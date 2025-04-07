@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"io/ioutil"
 	"time"
 
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/wal"
 	"gopkg.in/yaml.v3"
 )
 
@@ -12,6 +14,7 @@ type Config struct {
 	Engine  EngineConfig  `yaml:"engine"`
 	Network NetworkConfig `yaml:"network"`
 	Logging LoggingConfig `yaml:"logging"`
+	WAL     WALConfig     `yaml:"wal"`
 }
 
 // EngineConfig представляет конфигурацию движка базы данных
@@ -33,6 +36,14 @@ type LoggingConfig struct {
 	Output string `yaml:"uotput"`
 }
 
+type WALConfig struct {
+	Enabled              bool   `yaml:"enabled"`
+	FlushingBatchSize    int    `yaml:"flushing_batch_size"`
+	FlushingBatchTimeout string `yaml:"flushing_batch_timeout"`
+	MaxSegmentSize       string `yaml:"max_segment_size"`
+	DataDirectory        string `yaml:"data_directory"`
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Engine: EngineConfig{
@@ -48,6 +59,44 @@ func DefaultConfig() *Config {
 			Level:  "info",
 			Output: "stdout",
 		},
+		WAL: WALConfig{
+			Enabled:              false,
+			FlushingBatchSize:    100,
+			FlushingBatchTimeout: "10ms",
+			MaxSegmentSize:       "10MB",
+			DataDirectory:        "/data/spider/wal",
+		},
+	}
+}
+
+// GetWALConfig конвертирует конфигурацию WAL из YAML в объект wal.WALConfig
+func (c *Config) GetWALConfig() *wal.WALConfig {
+	if !c.WAL.Enabled {
+		return nil
+	}
+
+	// Парсим параметры
+	var flushTimeout time.Duration
+	if c.WAL.FlushingBatchTimeout != "" {
+		flushTimeout, _ = time.ParseDuration(c.WAL.FlushingBatchTimeout)
+	} else {
+		flushTimeout = 10 * time.Millisecond
+	}
+
+	var maxSegmentSize int64
+	if c.WAL.MaxSegmentSize != "" {
+		fmt.Sscanf(c.WAL.MaxSegmentSize, "%dMB", &maxSegmentSize)
+		maxSegmentSize = maxSegmentSize * 1024 * 1024 // Конвертируем MB в байты
+	} else {
+		maxSegmentSize = 10 * 1024 * 1024 // 10MB по умолчанию
+	}
+
+	return &wal.WALConfig{
+		Enabled:              c.WAL.Enabled,
+		FlushingBatchSize:    c.WAL.FlushingBatchSize,
+		FlushingBatchTimeout: flushTimeout,
+		MaxSegmentSize:       maxSegmentSize,
+		DataDirectory:        c.WAL.DataDirectory,
 	}
 }
 
@@ -67,5 +116,6 @@ func LoadConfig(filename string) (*Config, error) {
 	if err != nil {
 		return config, err
 	}
+
 	return config, nil
 }
