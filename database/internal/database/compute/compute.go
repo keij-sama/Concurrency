@@ -5,43 +5,41 @@ import (
 
 	"github.com/keij-sama/Concurrency/database/internal/database/compute/parser"
 	"github.com/keij-sama/Concurrency/database/internal/database/storage"
+	"github.com/keij-sama/Concurrency/pkg/logger"
 	"go.uber.org/zap"
 )
 
-// Интерфейс для обработки запросов
+// Compute определяет интерфейс для обработки запросов
 type Compute interface {
 	Process(input string) (string, error)
 }
 
-// Реализация для обработчика запросов
+// SimpleCompute реализует интерфейс Compute
 type SimpleCompute struct {
 	parser  parser.Parser
 	storage storage.Storage
-	logger  *zap.Logger
+	logger  logger.Logger
 }
 
-// Новый обработчик запросов
-func NewCompute(p parser.Parser, s storage.Storage, logger *zap.Logger) Compute {
-	// Если логгер не передан, создаем дефолтный
-	if logger == nil {
-		logger, _ = zap.NewDevelopment()
-	}
-
+// NewCompute создает новый экземпляр обработчика запросов
+func NewCompute(p parser.Parser, s storage.Storage, log logger.Logger) Compute {
 	return &SimpleCompute{
 		parser:  p,
 		storage: s,
-		logger:  logger,
+		logger:  log,
 	}
 }
 
-// Обработка запроса
+// Process обрабатывает запрос
 func (c *SimpleCompute) Process(input string) (string, error) {
-	c.logger.Info("Request processing", zap.String("input", input))
+	c.logger.Info("Processing request",
+		zap.String("input", input),
+	)
 
 	// Парсинг запроса
 	cmd, err := c.parser.Parse(input)
 	if err != nil {
-		c.logger.Error("Parser error",
+		c.logger.Error("Parse error",
 			zap.String("input", input),
 			zap.Error(err),
 		)

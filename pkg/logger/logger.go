@@ -21,6 +21,12 @@ func NewLogger() Logger {
 	}
 }
 
+func NewLoggerWithZap(zapLogger *zap.Logger) Logger {
+	return &ZapLogger{
+		log: zapLogger,
+	}
+}
+
 func (l *ZapLogger) Info(msg string, fields ...zap.Field) {
 	l.log.Info(msg, fields...)
 }
