@@ -11,10 +11,11 @@ import (
 
 // Config представляет полную конфигурацию базы данных
 type Config struct {
-	Engine  EngineConfig  `yaml:"engine"`
-	Network NetworkConfig `yaml:"network"`
-	Logging LoggingConfig `yaml:"logging"`
-	WAL     WALConfig     `yaml:"wal"`
+	Engine      EngineConfig      `yaml:"engine"`
+	Network     NetworkConfig     `yaml:"network"`
+	Logging     LoggingConfig     `yaml:"logging"`
+	WAL         WALConfig         `yaml:"wal"`
+	Replication ReplicationConfig `yaml:"replication"`
 }
 
 // EngineConfig представляет конфигурацию движка базы данных
@@ -44,6 +45,14 @@ type WALConfig struct {
 	DataDirectory        string `yaml:"data_directory"`
 }
 
+// ReplicationConfig представляет конфигурацию репликации
+type ReplicationConfig struct {
+	Enabled       bool   `yaml:"enabled"`        // Включена ли репликация
+	ReplicaType   string `yaml:"replica_type"`   // Тип реплики (master/slave)
+	MasterAddress string `yaml:"master_address"` // Адрес мастера (для slave)
+	SyncInterval  string `yaml:"sync_interval"`  // Интервал синхронизации
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Engine: EngineConfig{
@@ -65,6 +74,12 @@ func DefaultConfig() *Config {
 			FlushingBatchTimeout: "10ms",
 			MaxSegmentSize:       "10MB",
 			DataDirectory:        "/data/spider/wal",
+		},
+		Replication: ReplicationConfig{
+			Enabled:       false,
+			ReplicaType:   "master",
+			MasterAddress: "127.0.0.1:3232",
+			SyncInterval:  "1s",
 		},
 	}
 }
@@ -118,4 +133,32 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// GetReplicationConfig преобразует конфигурацию репликации
+func (c *Config) GetReplicationConfig() *replication.ReplicationConfig {
+	if !c.Replication.Enabled {
+		return nil
+	}
+
+	// Парсим интервал синхронизации
+	syncInterval, err := time.ParseDuration(c.Replication.SyncInterval)
+	if err != nil {
+		syncInterval = 1 * time.Second // По умолчанию 1 секунда
+	}
+
+	var replicaType replication.ReplicationType
+	switch c.Replication.ReplicaType {
+	case "slave":
+		replicaType = replication.TypeSlave
+	default:
+		replicaType = replication.TypeMaster
+	}
+
+	return &replication.ReplicationConfig{
+		Enabled:       c.Replication.Enabled,
+		ReplicaType:   replicaType,
+		MasterAddress: c.Replication.MasterAddress,
+		SyncInterval:  syncInterval,
+	}
 }
