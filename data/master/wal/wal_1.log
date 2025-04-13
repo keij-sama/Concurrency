@@ -1,0 +1,1 @@
+[{"lsn":1,"operation":"SET","args":["mykey","myvalue"]}]

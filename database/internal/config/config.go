@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"time"
 
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/replication"
 	"github.com/keij-sama/Concurrency/database/internal/database/storage/wal"
 	"gopkg.in/yaml.v3"
 )

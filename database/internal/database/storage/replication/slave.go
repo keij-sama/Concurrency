@@ -22,6 +22,9 @@ type Slave struct {
 	logger       logger.Logger
 	lastSegment  string
 	walRecovery  func([]wal.Log) error // Функция для восстановления из WAL
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{} // Канал для сигнализации о завершении
 }
 
 // NewSlave создает новый экземпляр Slave
@@ -32,19 +35,26 @@ func NewSlave(client *network.TCPClient, walDirectory string, syncInterval time.
 		return nil, errors.New("client is invalid")
 	}
 
+	// Создаем свой контекст, который будет отменен при закрытии слейва
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Slave{
 		client:       client,
 		walDirectory: walDirectory,
 		syncInterval: syncInterval,
 		logger:       logger,
 		walRecovery:  walRecovery,
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
 	}, nil
 }
 
 // Start запускает процесс синхронизации с мастером
 func (s *Slave) Start(ctx context.Context) error {
 	s.logger.Info("Starting replication slave",
-		zap.String("wal_directory", s.walDirectory))
+		zap.String("wal_directory", s.walDirectory),
+		zap.Duration("sync_interval", s.syncInterval))
 
 	// Определяем последний полученный сегмент
 	segments, err := listWALSegments(s.walDirectory)
@@ -58,7 +68,7 @@ func (s *Slave) Start(ctx context.Context) error {
 	}
 
 	// Запускаем процесс синхронизации
-	go s.syncLoop(ctx)
+	go s.syncLoop()
 
 	return nil
 }
@@ -70,28 +80,66 @@ func (s *Slave) IsMaster() bool {
 
 // Close закрывает Slave
 func (s *Slave) Close() error {
+	s.logger.Info("Closing replication slave")
+
+	// Отменяем контекст, что остановит syncLoop
+	s.cancel()
+
+	// Ждем завершения syncLoop
+	select {
+	case <-s.done:
+		s.logger.Info("Slave sync loop stopped gracefully")
+	case <-time.After(time.Second):
+		s.logger.Info("Timeout waiting for slave sync loop to stop")
+	}
+
+	// Закрываем клиент
+	s.client.Close()
+
 	return nil
 }
 
 // syncLoop периодически синхронизируется с мастером
-func (s *Slave) syncLoop(ctx context.Context) {
+func (s *Slave) syncLoop() {
+	defer close(s.done) // Сигнализируем о завершении при выходе
+
 	ticker := time.NewTicker(s.syncInterval)
 	defer ticker.Stop()
 
+	s.logger.Info("Starting sync loop")
+
+	// Выполняем первую синхронизацию немедленно
+	if err := s.sync(); err != nil {
+		s.logger.Error("Initial sync failed", zap.Error(err))
+	}
+
 	for {
 		select {
-		case <-ctx.Done():
+		case <-s.ctx.Done():
+			s.logger.Info("Sync loop terminated due to context cancellation")
 			return
 		case <-ticker.C:
-			if err := s.sync(ctx); err != nil {
+			if err := s.sync(); err != nil {
 				s.logger.Error("Sync failed", zap.Error(err))
+				// Продолжаем работу даже при ошибках
 			}
 		}
 	}
 }
 
 // sync выполняет одну синхронизацию с мастером
-func (s *Slave) sync(ctx context.Context) error {
+func (s *Slave) sync() error {
+	// Проверка контекста на завершение
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	default:
+		// Продолжаем выполнение
+	}
+
+	s.logger.Info("Starting sync with master",
+		zap.String("last_segment", s.lastSegment))
+
 	request := Request{
 		LastSegmentName: s.lastSegment,
 	}
@@ -113,24 +161,24 @@ func (s *Slave) sync(ctx context.Context) error {
 	}
 
 	if !response.Succeed {
-		return fmt.Errorf("master reported sync failure")
+		return fmt.Errorf("master reported sync failure: %s", response.Error)
 	}
 
 	// Если мастер не вернул новый сегмент, все в порядке
 	if response.SegmentName == "" {
-		s.logger.Debug("No new WAL segments from master")
+		s.logger.Info("No new WAL segments from master")
 		return nil
 	}
+
+	s.logger.Info("Received WAL segment from master",
+		zap.String("segment", response.SegmentName),
+		zap.Int("size", len(response.SegmentData)))
 
 	// Сохраняем полученный сегмент на диск
 	segmentPath := filepath.Join(s.walDirectory, response.SegmentName)
 	if err := os.WriteFile(segmentPath, response.SegmentData, 0644); err != nil {
 		return fmt.Errorf("failed to write WAL segment: %w", err)
 	}
-
-	s.logger.Info("Received WAL segment from master",
-		zap.String("segment", response.SegmentName),
-		zap.Int("size", len(response.SegmentData)))
 
 	// Обновляем последний полученный сегмент
 	s.lastSegment = response.SegmentName
@@ -140,6 +188,9 @@ func (s *Slave) sync(ctx context.Context) error {
 		return fmt.Errorf("failed to apply WAL segment: %w", err)
 	}
 
+	s.logger.Info("Successfully applied WAL segment",
+		zap.String("segment", response.SegmentName))
+
 	return nil
 }
 
@@ -148,8 +199,12 @@ func (s *Slave) applyWALSegment(segmentPath string) error {
 	// Читаем записи WAL из сегмента
 	logs, err := wal.ReadLogsFromFile(segmentPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read logs from WAL segment: %w", err)
 	}
+
+	s.logger.Info("Applying WAL segment",
+		zap.String("path", segmentPath),
+		zap.Int("logs_count", len(logs)))
 
 	// Применяем изменения
 	if s.walRecovery != nil {

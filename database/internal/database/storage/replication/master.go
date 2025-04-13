@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/keij-sama/Concurrency/database/internal/network"
 	"github.com/keij-sama/Concurrency/pkg/logger"
@@ -16,6 +18,8 @@ type Master struct {
 	server       *network.TCPServer
 	walDirectory string
 	logger       logger.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // NewMaster создает новый экземпляр Master
@@ -24,10 +28,15 @@ func NewMaster(server *network.TCPServer, walDirectory string, logger logger.Log
 		return nil, errors.New("server is invalid")
 	}
 
+	// Создаем свой контекст, который будет отменен при закрытии мастера
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Master{
 		server:       server,
 		walDirectory: walDirectory,
 		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
 	}, nil
 }
 
@@ -36,27 +45,38 @@ func (m *Master) Start(ctx context.Context) error {
 	m.logger.Info("Starting replication master",
 		zap.String("wal_directory", m.walDirectory))
 
-	m.server.HandleQueries(ctx, func(ctx context.Context, requestData []byte) []byte {
-		if ctx.Err() != nil {
+	// Обработчик запросов от слейвов
+	handler := func(ctx context.Context, requestData []byte) []byte {
+		// Проверяем контекст
+		select {
+		case <-ctx.Done():
+			// Контекст отменен, возвращаем пустой ответ
 			return nil
+		default:
+			// Продолжаем выполнение
 		}
 
 		var request Request
 		if err := Decode(&request, requestData); err != nil {
 			m.logger.Error("Failed to decode replication request", zap.Error(err))
-			return nil
+			return encodeErrorResponse(errors.New("invalid request format"))
 		}
+
+		m.logger.Info("Received replication request",
+			zap.String("last_segment", request.LastSegmentName))
 
 		response := m.synchronize(request)
 		responseData, err := Encode(response)
 		if err != nil {
 			m.logger.Error("Failed to encode replication response", zap.Error(err))
-			return nil
+			return encodeErrorResponse(errors.New("failed to encode response"))
 		}
 
 		return responseData
-	})
+	}
 
+	// Запускаем обработку запросов с контекстом мастера, а не с переданным контекстом
+	go m.server.HandleQueries(m.ctx, handler)
 	return nil
 }
 
@@ -67,6 +87,11 @@ func (m *Master) IsMaster() bool {
 
 // Close закрывает Master
 func (m *Master) Close() error {
+	m.logger.Info("Closing replication master")
+
+	// Отменяем контекст, что остановит обработку запросов
+	m.cancel()
+
 	return nil
 }
 
@@ -88,6 +113,7 @@ func (m *Master) synchronize(request Request) *Response {
 	if segmentName == "" {
 		// Нет новых сегментов, все актуально
 		response.Succeed = true
+		m.logger.Info("No new WAL segments to send")
 		return response
 	}
 
@@ -143,7 +169,7 @@ func findNextSegment(directory string, lastSegmentName string) (string, error) {
 	return "", nil
 }
 
-// listWALSegments возвращает список всех сегментов WAL
+// listWALSegments возвращает отсортированный список всех сегментов WAL
 func listWALSegments(directory string) ([]string, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -152,11 +178,14 @@ func listWALSegments(directory string) ([]string, error) {
 
 	var segments []string
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".log" {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "wal_") &&
+			strings.HasSuffix(entry.Name(), ".log") {
 			segments = append(segments, entry.Name())
 		}
 	}
 
+	// Сортируем сегменты по имени
+	sort.Strings(segments)
 	return segments, nil
 }
 
@@ -168,4 +197,14 @@ func contains(slice []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// encodeErrorResponse кодирует ответ с ошибкой
+func encodeErrorResponse(err error) []byte {
+	response := &Response{
+		Succeed: false,
+		Error:   err.Error(),
+	}
+	data, _ := Encode(response)
+	return data
 }

@@ -1,4 +1,3 @@
-// cmd/server/main.go
 package main
 
 import (
@@ -43,11 +42,14 @@ func main() {
 	parser := parser.NewParser()
 	eng := engine.NewInMemoryEngine()
 
-	// Получаем конфигурацию WAL
-	walConfig := cfg.GetWALConfig()
+	// Опции для хранилища
+	options := storage.StorageOptions{
+		WALConfig:         cfg.GetWALConfig(),
+		ReplicationConfig: cfg.GetReplicationConfig(),
+	}
 
-	// Инициализируем хранилище с WAL
-	storage, err := storage.NewStorage(eng, customLogger, walConfig)
+	// Инициализируем хранилище с WAL и репликацией
+	storage, err := storage.NewStorage(eng, customLogger, options)
 	if err != nil {
 		zapLogger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
@@ -56,7 +58,12 @@ func main() {
 	// Инициализируем обработчик запросов
 	compute := compute.NewCompute(parser, storage, customLogger)
 
-	// Создаем TCP-сервер
+	// Определяем, запускать ли сетевой сервер
+	if cfg.Replication.Enabled && cfg.Replication.ReplicaType == "slave" {
+		zapLogger.Info("Running in slave mode, listening for client connections")
+	}
+
+	// Создаем TCP-сервер для клиентских запросов
 	var bufferSize int
 	if cfg.Network.MaxMessageSize != "" {
 		fmt.Sscanf(cfg.Network.MaxMessageSize, "%dKB", &bufferSize)
@@ -66,6 +73,7 @@ func main() {
 		bufferSize = 4 << 10
 	}
 
+	// Создаем сетевой сервер
 	server, err := network.NewTCPServer(
 		cfg.Network.Address,
 		zapLogger,
@@ -90,7 +98,7 @@ func main() {
 		cancel()
 	}()
 
-	// Запускаем сервер
+	// Запускаем TCP сервер для клиентских запросов
 	zapLogger.Info("Starting server", zap.String("address", cfg.Network.Address))
 	server.HandleQueries(ctx, func(ctx context.Context, query []byte) []byte {
 		result, err := compute.Process(string(query))

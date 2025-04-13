@@ -37,7 +37,10 @@ func main() {
 	walConfig := cfg.GetWALConfig()
 
 	// Инициализируем хранилище с WAL, если он включен
-	storage, err := storage.NewStorage(engine, customLogger, walConfig)
+	storage, err := storage.NewStorage(engine, customLogger, storage.StorageOptions{
+		WALConfig:         walConfig,
+		ReplicationConfig: nil,
+	})
 	if err != nil {
 		fmt.Printf("ERROR: Failed to initialize storage: %v\n", err)
 		os.Exit(1)

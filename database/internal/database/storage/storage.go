@@ -1,16 +1,14 @@
-// database/storage/storage.go
 package storage
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/engine"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/replication"
+	"github.com/keij-sama/Concurrency/database/internal/database/storage/wal"
 	"github.com/keij-sama/Concurrency/database/internal/network"
-	"github.com/keij-sama/Concurrency/database/storage/engine"
-	"github.com/keij-sama/Concurrency/database/storage/replication"
-	"github.com/keij-sama/Concurrency/database/storage/wal"
 	"github.com/keij-sama/Concurrency/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -93,32 +91,90 @@ func NewStorage(eng engine.Engine, log logger.Logger, options StorageOptions) (S
 	return storage, nil
 }
 
+// recoverFromWAL восстанавливает данные из WAL
+func (s *SimpleStorage) recoverFromWAL() error {
+	// Получаем логи из WAL
+	logs, err := s.wal.Recover()
+	if err != nil {
+		return fmt.Errorf("failed to recover logs from WAL: %w", err)
+	}
+
+	// Применяем логи к движку
+	for _, log := range logs {
+		switch log.Operation {
+		case wal.OperationSet:
+			if len(log.Args) >= 2 {
+				key := log.Args[0]
+				value := log.Args[1]
+				if err := s.engine.Set(key, value); err != nil {
+					s.logger.Error("Failed to apply SET operation from WAL",
+						zap.Uint64("lsn", log.LSN),
+						zap.String("key", key),
+						zap.Error(err),
+					)
+				}
+			}
+		case wal.OperationDel:
+			if len(log.Args) >= 1 {
+				key := log.Args[0]
+				if err := s.engine.Delete(key); err != nil && !errors.Is(err, engine.ErrKeyNotFound) {
+					s.logger.Error("Failed to apply DEL operation from WAL",
+						zap.Uint64("lsn", log.LSN),
+						zap.String("key", key),
+						zap.Error(err),
+					)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // initializeReplication инициализирует репликацию
 func (s *SimpleStorage) initializeReplication(cfg replication.ReplicationConfig) (replication.Replication, error) {
+	// Создаем новый zap logger для репликации
+	// Вместо опасного приведения типов используем напрямую zap.NewProduction()
+	newZapLogger, err := zap.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zap logger: %w", err)
+	}
+
 	if cfg.ReplicaType == replication.TypeMaster {
-		// Настраиваем мастер
-		// Создаем TCP сервер для репликации
-		listener, err := net.Listen("tcp", cfg.MasterAddress)
+		s.logger.Info("Initializing replication master",
+			zap.String("master_address", cfg.MasterAddress))
+
+		server, err := network.NewTCPServer(
+			cfg.MasterAddress,
+			newZapLogger,
+			network.WithMaxConnections(100),
+			network.WithIdleTimeout(cfg.SyncInterval),
+			network.WithBufferSize(4096),
+		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create replication listener: %w", err)
+			return nil, fmt.Errorf("failed to create replication server: %w", err)
 		}
 
-		server := network.NewTCPServer(listener, s.logger)
+		s.logger.Info("Replication server created successfully")
 
 		master, err := replication.NewMaster(server, s.wal.GetDirectory(), s.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create replication master: %w", err)
 		}
 
-		// Запускаем мастер
+		s.logger.Info("Starting replication master")
 		if err := master.Start(s.ctx); err != nil {
 			return nil, fmt.Errorf("failed to start replication master: %w", err)
 		}
 
+		s.logger.Info("Replication master started successfully")
 		return master, nil
 	} else {
 		// Настраиваем слейв
-		client, err := network.NewTCPClient(cfg.MasterAddress)
+		client, err := network.NewTCPClient(
+			cfg.MasterAddress,
+			network.WithClientIdleTimeout(cfg.SyncInterval),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create replication client: %w", err)
 		}
@@ -127,7 +183,7 @@ func (s *SimpleStorage) initializeReplication(cfg replication.ReplicationConfig)
 		walRecovery := func(logs []wal.Log) error {
 			for _, log := range logs {
 				switch log.Operation {
-				case "SET":
+				case wal.OperationSet:
 					if len(log.Args) >= 2 {
 						if err := s.engine.Set(log.Args[0], log.Args[1]); err != nil {
 							s.logger.Error("Failed to apply SET operation from WAL",
@@ -137,7 +193,7 @@ func (s *SimpleStorage) initializeReplication(cfg replication.ReplicationConfig)
 							)
 						}
 					}
-				case "DEL":
+				case wal.OperationDel:
 					if len(log.Args) >= 1 {
 						if err := s.engine.Delete(log.Args[0]); err != nil && !errors.Is(err, engine.ErrKeyNotFound) {
 							s.logger.Error("Failed to apply DEL operation from WAL",
@@ -164,42 +220,6 @@ func (s *SimpleStorage) initializeReplication(cfg replication.ReplicationConfig)
 
 		return slave, nil
 	}
-}
-
-// recoverFromWAL восстанавливает данные из WAL
-func (s *SimpleStorage) recoverFromWAL() error {
-	logs, err := s.wal.Recover()
-	if err != nil {
-		return err
-	}
-
-	// Применяем операции из WAL
-	for _, log := range logs {
-		switch log.Operation {
-		case "SET":
-			if len(log.Args) >= 2 {
-				if err := s.engine.Set(log.Args[0], log.Args[1]); err != nil {
-					s.logger.Error("Failed to restore SET operation",
-						zap.Uint64("lsn", log.LSN),
-						zap.String("key", log.Args[0]),
-						zap.Error(err),
-					)
-				}
-			}
-		case "DEL":
-			if len(log.Args) >= 1 {
-				if err := s.engine.Delete(log.Args[0]); err != nil && !errors.Is(err, engine.ErrKeyNotFound) {
-					s.logger.Error("Failed to restore DEL operation",
-						zap.Uint64("lsn", log.LSN),
-						zap.String("key", log.Args[0]),
-						zap.Error(err),
-					)
-				}
-			}
-		}
-	}
-
-	return nil
 }
 
 // Set сохраняет пару ключ-значение

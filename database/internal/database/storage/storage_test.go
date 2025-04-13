@@ -39,7 +39,10 @@ func TestStorageWithWAL(t *testing.T) {
 	eng := engine.NewInMemoryEngine()
 
 	// Создаем хранилище с WAL
-	storage, err := NewStorage(eng, customLogger, walConfig)
+	storage, err := NewStorage(eng, customLogger, StorageOptions{
+		WALConfig:         walConfig,
+		ReplicationConfig: nil,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -74,7 +77,9 @@ func TestStorageWithWAL(t *testing.T) {
 	}
 
 	// Закрываем хранилище
-	storage.Close()
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Failed to close storage: %v", err)
+	}
 
 	// Проверяем, что WAL файлы созданы
 	files, err := filepath.Glob(filepath.Join(tempDir, "wal_*.log"))
@@ -88,11 +93,13 @@ func TestStorageWithWAL(t *testing.T) {
 
 	// Создаем новое хранилище с тем же WAL для проверки восстановления
 	newEngine := engine.NewInMemoryEngine()
-	newStorage, err := NewStorage(newEngine, customLogger, walConfig)
+	newStorage, err := NewStorage(newEngine, customLogger, StorageOptions{
+		WALConfig:         walConfig, // Важно использовать ту же конфигурацию WAL
+		ReplicationConfig: nil,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create new storage: %v", err)
 	}
-	defer newStorage.Close()
 
 	// Проверяем, что данные восстановлены
 	value2, err := newStorage.Get("key2")
@@ -108,6 +115,11 @@ func TestStorageWithWAL(t *testing.T) {
 	if !errors.Is(err, engine.ErrKeyNotFound) {
 		t.Errorf("Expected key1 to remain deleted after recovery, got %v", err)
 	}
+
+	// Закрываем второе хранилище
+	if err := newStorage.Close(); err != nil {
+		t.Fatalf("Failed to close new storage: %v", err)
+	}
 }
 
 func TestStorageWithoutWAL(t *testing.T) {
@@ -119,11 +131,10 @@ func TestStorageWithoutWAL(t *testing.T) {
 	eng := engine.NewInMemoryEngine()
 
 	// Создаем хранилище без WAL
-	storage, err := NewStorage(eng, customLogger, nil)
+	storage, err := NewStorage(eng, customLogger, StorageOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
 
 	// Выполняем операции с хранилищем
 	if err := storage.Set("key1", "value1"); err != nil {
@@ -148,5 +159,10 @@ func TestStorageWithoutWAL(t *testing.T) {
 	_, err = storage.Get("key1")
 	if !errors.Is(err, engine.ErrKeyNotFound) {
 		t.Errorf("Expected key not found error, got %v", err)
+	}
+
+	// Закрываем хранилище
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Failed to close storage: %v", err)
 	}
 }

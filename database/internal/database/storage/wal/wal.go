@@ -360,3 +360,22 @@ func completeAllWithSuccess(batch []WriteRequest) {
 		close(req.Done)
 	}
 }
+
+func (w *WAL) GetDirectory() string {
+	return w.config.DataDirectory
+}
+
+func ReadLogsFromFile(filename string) ([]Log, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось прочитать файл WAL: %w", err)
+	}
+
+	var logs []Log
+	err = json.Unmarshal(data, &logs)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось декодировать логи: %w", err)
+	}
+
+	return logs, nil
+}
