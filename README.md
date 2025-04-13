@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # In-Memory Key-Value Database with WAL and Replication
 
 Распределенная in-memory key-value база данных с поддержкой WAL (Write-Ahead Log) и репликацией Master-Slave.
