@@ -1,4 +1,3 @@
-
 # In-Memory Key-Value Database with WAL and Replication
 
 Распределенная in-memory key-value база данных с поддержкой WAL (Write-Ahead Log) и репликацией Master-Slave.
@@ -112,7 +111,7 @@ wal:
 replication:
   enabled: true
   replica_type: "slave"
-  master_address: "127.0.0.1:3232"
+  master_address: "127.0.0.1:3223"
   sync_interval: "1s"
 ```
 
@@ -217,7 +216,7 @@ database/
 
 5. Проверьте репликацию, подключившись к слейву:
    ```powershell
-   .\bin\client.exe --address 127.0.0.1:3224
+   .\bin\client.exe --address 127.0.0.1:3223
    ```
 
 ## Ограничения
