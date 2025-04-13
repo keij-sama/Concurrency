@@ -1,0 +1,35 @@
+# Бинарные файлы
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Данные и логи
+/data/
+/logs/
+*.log
+*.wal
+
+# Временные файлы
+/tmp/
+*.tmp
+
+# Зависимости
+/vendor/
+
+# Конфигурации с чувствительными данными
+*-credentials.yaml
+*-secrets.yaml
+.env
+
+# IDE и редакторы
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+.DS_Store
+
+# Go-специфичные файлы
+# go.sum
